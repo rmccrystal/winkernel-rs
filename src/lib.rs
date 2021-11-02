@@ -1,8 +1,18 @@
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-}
+#![no_std]
+#![feature(alloc_error_handler)]
+#![feature(alloc_prelude)]
+#![feature(core_intrinsics)]
+#![allow(clippy::missing_safety_doc)]
+#![feature(try_trait_v2)]
+
+extern crate alloc;
+
+pub mod allocator;
+pub mod log;
+pub mod string;
+pub mod kernel;
+pub mod basedef;
+pub mod ntstatus;
+pub mod process;
+pub mod vsb;
+pub mod util;
