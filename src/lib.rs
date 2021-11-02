@@ -3,7 +3,6 @@
 #![feature(alloc_prelude)]
 #![feature(core_intrinsics)]
 #![allow(clippy::missing_safety_doc)]
-#![feature(try_trait_v2)]
 
 extern crate alloc;
 

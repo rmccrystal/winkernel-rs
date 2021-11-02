@@ -35,7 +35,7 @@ unsafe impl GlobalAlloc for KernelAlloc {
     }
 }
 
-// #[alloc_error_handler]
-// fn alloc_error(layout: Layout) -> ! {
-//     panic!("{:?} alloc memory error", layout);
-// }
+#[alloc_error_handler]
+fn alloc_error(layout: Layout) -> ! {
+    panic!("{:?} alloc memory error", layout);
+}
