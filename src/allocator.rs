@@ -13,7 +13,7 @@ extern "system" {
     pub fn ExFreePoolWithTag(pool: *mut c_void, tag: u32);
 }
 
-static ALLOC_TAG: u32 = unsafe { core::mem::transmute(*b"krnl") };
+static ALLOC_TAG: u32 = u32::from_le_bytes(*b"krnl");
 
 /// The global kernel allocator structure.
 pub struct KernelAlloc;
@@ -36,6 +36,7 @@ unsafe impl GlobalAlloc for KernelAlloc {
 }
 
 #[alloc_error_handler]
+#[cfg(not(test))]
 fn alloc_error(layout: Layout) -> ! {
     panic!("{:?} alloc memory error", layout);
 }

@@ -15,21 +15,21 @@ pub fn __kernel_print(mut text: String) {
 #[macro_export]
 macro_rules! println {
     ($($arg:tt)*) => ({
-        $crate::util::log::__kernel_print(alloc::format!($($arg)*));
+        ::winkernel::log::__kernel_print(alloc::format!($($arg)*));
     })
 }
 
 #[macro_export]
 macro_rules! dbg {
     () => {
-        println!("[{}:{}]", $crate::file!(), $crate::line!());
+        ::winkernel::println!("[{}:{}]", $crate::file!(), $crate::line!());
     };
     ($val:expr $(,)?) => {
         // Use of `match` here is intentional because it affects the lifetimes
         // of temporaries - https://stackoverflow.com/a/48732525/1063961
         match $val {
             tmp => {
-                println!("[{}:{}] {} = {:#?}",
+                ::winkernel::println!("[{}:{}] {} = {:#?}",
                     core::file!(), core::line!(), core::stringify!($val), &tmp);
                 tmp
             }
@@ -40,14 +40,19 @@ macro_rules! dbg {
     };
 }
 
-pub struct KernelLogger;
+pub struct KernelLogger {
+    pub prefix: &'static str,
+}
 
-static LOGGER: KernelLogger = KernelLogger;
+static mut LOGGER: KernelLogger = KernelLogger { prefix: "" };
 
 impl KernelLogger {
-    pub fn init(level: LevelFilter) -> Result<(), SetLoggerError> {
-        log::set_logger(&LOGGER)
-            .map(|()| log::set_max_level(level))
+    pub fn init(level: LevelFilter, prefix: &'static str) -> Result<(), SetLoggerError> {
+        unsafe {
+            LOGGER.prefix = prefix;
+            log::set_logger(&LOGGER)
+                .map(|()| log::set_max_level(level))
+        }
     }
 }
 
@@ -69,7 +74,7 @@ impl log::Log for KernelLogger {
             Level::Trace => "[?]",
         };
 
-        __kernel_print(alloc::format!("{} {}", prefix, record.args()));
+        __kernel_print(alloc::format!("[{}] {} {}", self.prefix, prefix, record.args()));
     }
 
     fn flush(&self) {}

@@ -3,7 +3,9 @@
 
 pub use winapi::shared::ntdef::*;
 use core::ffi::c_void;
-pub use winapi::shared::ntstatus::*;
+pub use winapi::shared::ntstatus;
+pub use winapi;
+pub use ntapi;
 
 pub type PEPROCESS = *mut c_void;
 pub type PMDL = *mut c_void;

@@ -13,6 +13,7 @@ use core::{
     ptr::{self, NonNull},
     slice::{from_raw_parts, from_raw_parts_mut},
 };
+use core::ops::{Deref, DerefMut};
 
 /// This is a smart pointer type for holding FFI types whose size varies.
 /// Most commonly this is with an array member as the last field whose size is specified
@@ -22,6 +23,7 @@ pub struct VariableSizedBox<T> {
     data: NonNull<T>,
     pd: PhantomData<T>,
 }
+
 impl<T> VariableSizedBox<T> {
     /// The size is specified in bytes. The data is zeroed.
     pub fn new(size: usize) -> VariableSizedBox<T> {
@@ -258,6 +260,7 @@ impl<T> VariableSizedBox<T> {
         self.slice_from_bytes_mut(ptr, bytes)
     }
 }
+
 impl<T> Drop for VariableSizedBox<T> {
     fn drop(&mut self) {
         if self.size == 0 {
@@ -267,6 +270,7 @@ impl<T> Drop for VariableSizedBox<T> {
         unsafe { dealloc(self.as_mut_ptr().cast(), layout) }
     }
 }
+
 impl<T> Default for VariableSizedBox<T> {
     fn default() -> Self {
         VariableSizedBox {
