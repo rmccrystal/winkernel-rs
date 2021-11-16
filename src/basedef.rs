@@ -13,7 +13,7 @@ pub type PMDL = *mut c_void;
 /// Processor modes.
 #[repr(u8)]
 #[derive(Copy, Clone)]
-pub enum KPROCESSOR_MODE
+pub enum KProcessorMode
 {
     KernelMode,
     UserMode,

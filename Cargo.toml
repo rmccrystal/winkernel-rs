@@ -8,6 +8,6 @@ edition = "2021"
 [dependencies]
 log = "0.4.14"
 ntapi = { version = "0.3.6", features = ["kernel", "impl-default", "nightly"] }
-winapi = { version = "0.3.9", features = ["ntdef", "ntstatus", "basetsd"] }
+winapi = { version = "0.3.9", features = ["ntdef", "ntstatus", "basetsd", "winnt"] }
 libc = "0.2.106"
 cstr_core = "0.2.4"

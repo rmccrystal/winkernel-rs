@@ -16,6 +16,10 @@ use cstr_core::CString;
 use crate::basedef::ntapi::ntobapi::POBJECT_NAME_INFORMATION;
 use ntapi::ntobapi::OBJECT_NAME_INFORMATION;
 use alloc::string::FromUtf16Error;
+use winapi::um::winnt::PAGE_READWRITE;
+use crate::process::PeProcess;
+use alloc::prelude::v1::*;
+use alloc::vec;
 
 #[allow(non_camel_case_types)]
 #[repr(i32)]
@@ -49,13 +53,13 @@ extern "system" {
 
     pub fn MmProbeAndLockPages(
         memory_descriptor_list: PMDL,
-        access_mode: KPROCESSOR_MODE,
+        access_mode: KProcessorMode,
         operation: LOCK_OPERATION,
     );
 
     pub fn MmMapLockedPagesSpecifyCache(
         memory_descriptor_list: PMDL,
-        access_mode: KPROCESSOR_MODE,
+        access_mode: KProcessorMode,
         cache_type: MEMORY_CACHING_TYPE,
         requested_address: PVOID,
         bug_check_on_failure: ULONG,
@@ -75,10 +79,10 @@ pub unsafe fn safe_copy(src: *const u8, dst: *mut u8, len: usize) -> Result<(), 
         return Err(ntstatus::STATUS_ACCESS_DENIED);
     }
 
-    MmProbeAndLockPages(mdl, KPROCESSOR_MODE::KernelMode, LOCK_OPERATION::IoReadAccess);
+    MmProbeAndLockPages(mdl, KProcessorMode::KernelMode, LOCK_OPERATION::IoReadAccess);
     let map = MmMapLockedPagesSpecifyCache(
         mdl,
-        KPROCESSOR_MODE::KernelMode,
+        KProcessorMode::KernelMode,
         MEMORY_CACHING_TYPE::MmNonCached,
         null_mut(),
         FALSE as u32,
@@ -198,6 +202,12 @@ pub struct SystemProcessInformation {
     pub threads: [SYSTEM_THREAD_INFORMATION; 1],
 }
 
+impl SystemProcessInformation {
+    pub unsafe fn to_process(&self) -> Option<PeProcess> {
+        PeProcess::by_pid(self.unique_process_id as _)
+    }
+}
+
 pub unsafe fn get_process_list() -> Result<Vec<SystemProcessInformation>, NTSTATUS> {
     let buf = query_system_information::<SystemProcessInformation>(SystemProcessInformation)?;
 
@@ -268,25 +278,25 @@ extern "system" {
         func: *mut c_void,
         context: *mut c_void,
         cookie: *mut u64,
-    );
+    ) -> NtStatus;
 
-    pub fn CmUnRegisterCallback(cookie: u64);
+    pub fn CmUnRegisterCallback(cookie: u64) -> NtStatus;
 }
 
 pub type RegistryCallbackFunc<T> = extern "C" fn(callback_context: &mut T, class: RegNotifyClass, operation: *mut c_void) -> NTSTATUS;
 
-pub unsafe fn create_registry_callback<T>(func: RegistryCallbackFunc<T>, context: &'static mut T) -> RegistryCallback {
+pub unsafe fn create_registry_callback<T>(func: RegistryCallbackFunc<T>, context: &'static mut T) -> Result<RegistryCallback, NTSTATUS> {
     let mut cookie = 0;
-    CmRegisterCallback(func as _, context as *mut T as _, &mut cookie);
-    RegistryCallback(cookie)
+    CmRegisterCallback(func as _, context as *mut T as _, &mut cookie).to_result()?;
+    Ok(RegistryCallback(cookie))
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct RegistryCallback(pub u64);
 
 impl RegistryCallback {
-    pub unsafe fn unregister(&self) {
-        CmUnRegisterCallback(self.0);
+    pub unsafe fn unregister(&self) -> Result<(), NTSTATUS> {
+        CmUnRegisterCallback(self.0).to_result()
     }
 }
 
@@ -341,32 +351,98 @@ pub unsafe fn get_object_name(object: PVOID) -> Result<String, NTSTATUS> {
 }
 
 extern "system" {
-    fn MmCopyMemory(
-        target_address: PVOID,
-        source_address: u64,
-        number_of_bytes: SIZE_T,
-        flags: ULONG,
-        number_of_bytes_transferred: PSIZE_T,
+    pub fn MmCopyMemory(
+        target: *mut u8,
+        copy_address: i64,
+        size: usize,
+        flags: u32,
+        bytes_transferred: *mut usize,
     ) -> NtStatus;
 }
 
-const MM_COPY_MEMORY_PHYSICAL: ULONG = 0x1;
-const MM_COPY_MEMORY_VIRTUAL: ULONG = 0x2;
+const MM_COPY_MEMORY_PHYSICAL: u32 = 0x1;
+const MM_COPY_MEMORY_VIRTUAL: u32 = 0x2;
 
-pub unsafe fn read_physical(address: u64, buf: &mut [u8]) -> Result<(), NTSTATUS> {
-    let mut bytes: usize = 0;
-    MmCopyMemory(buf.as_mut_ptr() as _, address, buf.len(), MM_COPY_MEMORY_PHYSICAL, &mut bytes).to_result()?;
-    if bytes < buf.len() {
-        return Err(ntstatus::STATUS_PARTIAL_COPY);
+pub unsafe fn read_physical_memory(physical_address: u64, buf: &mut [u8]) -> Result<(), (NTSTATUS, usize)> {
+    let mut bytes_transferred = 0;
+    let mut intermediate_buf = vec![0u8; buf.len()];
+    MmCopyMemory(intermediate_buf.as_mut_ptr(), physical_address as _, intermediate_buf.len(), MM_COPY_MEMORY_PHYSICAL, &mut bytes_transferred).to_result().map_err(|e| (e, bytes_transferred))?;
+    buf.copy_from_slice(&intermediate_buf);
+    if bytes_transferred != intermediate_buf.len() {
+        return Err((ntstatus::STATUS_PARTIAL_COPY, bytes_transferred));
     }
-
     Ok(())
 }
 
-extern "C" {
-    pub fn KeQueryPerformanceCounter(performance_frequency: *mut u64) -> u64;
+extern "system" {
+    pub fn MmMapIoSpaceEx(physical_address: i64, len: usize, protect: u32) -> *mut c_void;
+    pub fn MmUnmapIoSpace(base_address: *mut c_void, len: usize);
+}
+
+pub struct PhysicalMap {
+    buf: *mut u8,
+    len: usize,
+}
+
+impl PhysicalMap {
+    pub unsafe fn new(physical_address: u64, len: usize) -> Option<PhysicalMap> {
+        let map = MmMapIoSpaceEx(physical_address as _, len, PAGE_READWRITE);
+        if map.is_null() {
+            return None;
+        }
+        let buf = map as *mut u8;
+
+        Some(Self { buf, len })
+    }
+
+    pub unsafe fn as_slice(&self) -> &[u8] {
+        core::slice::from_raw_parts(self.buf, self.len)
+    }
+
+    pub unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
+        core::slice::from_raw_parts_mut(self.buf, self.len)
+    }
+}
+
+impl core::ops::Deref for PhysicalMap {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.as_slice() }
+    }
+}
+
+impl core::ops::DerefMut for PhysicalMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.as_mut_slice() }
+    }
+}
+
+impl Drop for PhysicalMap {
+    fn drop(&mut self) {
+        unsafe {
+            MmUnmapIoSpace(self.buf as _, self.len);
+        }
+    }
+}
+
+#[link(name = "hal")]
+extern "system" {
+    pub fn KeQueryPerformanceCounter(performance_frequency: *mut i64) -> u64;
 }
 
 pub unsafe fn query_performance_counter() -> u64 {
     KeQueryPerformanceCounter(null_mut())
+}
+
+extern "system" {
+    pub fn MmIsAddressValid(virtual_address: *mut c_void) -> BOOLEAN;
+}
+
+pub unsafe fn is_address_valid(address: usize) -> bool {
+    MmIsAddressValid(address as _) == 1
+}
+
+pub unsafe fn is_valid_ptr<T>(ptr: *const T) -> bool {
+    is_address_valid(ptr as _)
 }
